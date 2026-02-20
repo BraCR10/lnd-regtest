@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ###############################################################################
-#  lnd-setup.sh — Lightning Network (2 regtest nodes) + RTL + Mostro
+#  setup.sh — Mostro Regtest
 #
 #  Spins up 2 LND nodes on regtest using Docker (host networking),
 #  creates wallets, funds them from bitcoind, opens a channel, balances it,
@@ -10,16 +10,16 @@ set -euo pipefail
 #  Mostro (P2P Lightning exchange over Nostr) connected to lnd1.
 #
 #  Configuration: copy .env.example to .env and fill in your values.
-#  Run ./lnd-setup.sh --help for usage information.
+#  Run ./setup.sh --help for usage information.
 ###############################################################################
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
 show_usage() {
   cat <<'USAGE'
-Usage: ./lnd-setup.sh [--help]
+Usage: ./setup.sh [--help]
 
-Sets up 2 LND regtest nodes + RTL + Mostro with Docker (host networking).
+Mostro Regtest — sets up 2 LND regtest nodes + RTL + Mostro with Docker.
 
 Steps:
   1. Verifies prerequisites (docker, bitcoind, bitcoin-cli)
@@ -28,7 +28,7 @@ Steps:
   4. Prompts for a wallet password
   5. Writes configs, docker-compose.yml, and starts LND containers
   6. Creates wallets, enables auto-unlock, starts RTL and Nostr relay
-  7. Generates Nostr keys (rana), configures and starts Mostro on lnd1
+  7. Loads/prompts/generates Nostr key, configures and starts Mostro on lnd1
   8. Funds wallets and opens a balanced channel
 
 Configuration:
@@ -47,6 +47,9 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
 fi
 
 # ── Config ────────────────────────────────────────────────────────────────────
+# Load user settings from .env and apply defaults for anything unset.
+# Only BITCOIND_RPC_USER and BITCOIND_RPC_PASS are required — everything else
+# has sensible defaults so the script works out of the box.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="${SCRIPT_DIR}"
@@ -78,6 +81,7 @@ RTL_PORT="${RTL_PORT:-3000}"
 MOSTRO_IMAGE="${MOSTRO_IMAGE:-mostrop2p/mostro:v0.16.3}"
 MOSTRO_RELAY_IMAGE="${MOSTRO_RELAY_IMAGE:-scsibug/nostr-rs-relay}"
 MOSTRO_RELAY_PORT="${MOSTRO_RELAY_PORT:-7000}"
+MOSTRO_RELAYS="${MOSTRO_RELAYS:-wss://nos.lol,wss://relay.mostro.network}"
 
 ZMQ_BLOCK="tcp://${BITCOIND_HOST}:28332"
 ZMQ_TX="tcp://${BITCOIND_HOST}:28333"
@@ -98,6 +102,10 @@ MOSTRO_NPUB=""
 MOSTRO_HEX=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+# log/ok/fail — consistent coloured output for step progress.
+# lncli/bcli  — wrappers that hide repetitive flags.
+# mine_blocks — generates regtest blocks via the miner wallet.
+# wait_ready / wait_wallet_unlocker — poll loops for LND startup stages.
 
 log()  { echo -e "\n\033[1;34m[$1]\033[0m $2"; }
 ok()   { echo -e "  \033[1;32m✔\033[0m $1"; }
@@ -145,6 +153,10 @@ wait_wallet_unlocker() {
   return 1
 }
 
+# Generate lnd.conf for a node. All listeners bind to 127.0.0.1 because we use
+# host networking — without this, LND would listen on 0.0.0.0 and be reachable
+# from the internet. The optional $extra arg adds wallet-unlock-password-file
+# after the first run so LND auto-unlocks on restart.
 write_lnd_conf() {
   local node="$1" extra="${2:-}"
   cat > "${BASE_DIR}/${node}/lnd.conf" <<EOF
@@ -172,6 +184,9 @@ protocol.wumbo-channels=1
 EOF
 }
 
+# Generate RTL-Config.json with both LND nodes. RTL also binds to 127.0.0.1
+# for the same host-networking reason. Each node gets its own macaroon path
+# so RTL can switch between them via the UI dropdown.
 write_rtl_config() {
   local rtl_pass="${RTL_PASSWORD:-${WALLET_PASS}}"
   mkdir -p "${BASE_DIR}/rtl/database"
@@ -229,6 +244,8 @@ write_rtl_config() {
 EOF
 }
 
+# Local Nostr relay for Mostro. Binds to 127.0.0.1 so it's only reachable
+# locally — Mostro connects to it at ws://127.0.0.1:7000.
 write_relay_config() {
   mkdir -p "${BASE_DIR}/mostro/relay-data"
   cat > "${BASE_DIR}/mostro/relay-config.toml" <<EOF
@@ -244,8 +261,22 @@ max_event_bytes = 131072
 EOF
 }
 
+# Generate Mostro settings.toml. Points at lnd1's gRPC and the local relay.
+# TLS cert and admin macaroon are copied from lnd1 in step 7.
+# External relays from MOSTRO_RELAYS are added alongside the local relay.
 write_mostro_config() {
   mkdir -p "${BASE_DIR}/mostro/lnd"
+
+  # Build TOML relays array: local relay first, then any external relays
+  local relays_toml="'ws://127.0.0.1:${MOSTRO_RELAY_PORT}'"
+  if [[ -n "${MOSTRO_RELAYS}" ]]; then
+    IFS=',' read -ra extra_relays <<< "${MOSTRO_RELAYS}"
+    for r in "${extra_relays[@]}"; do
+      r="$(echo "$r" | xargs)"  # trim whitespace
+      [[ -n "$r" ]] && relays_toml+=", '${r}'"
+    done
+  fi
+
   cat > "${BASE_DIR}/mostro/settings.toml" <<EOF
 [lightning]
 lnd_cert_file = '/config/lnd/tls.cert'
@@ -259,7 +290,7 @@ payment_retries_interval = 60
 
 [nostr]
 nsec_privkey = '${MOSTRO_NSEC}'
-relays = ['ws://127.0.0.1:${MOSTRO_RELAY_PORT}']
+relays = [${relays_toml}]
 
 [mostro]
 fee = 0
@@ -307,7 +338,10 @@ COPY --from=builder /usr/local/cargo/bin/rana /usr/local/bin/rana
 ENTRYPOINT ["rana"]
 DOCKERFILE
 
-  docker build -t rana -f "${build_dir}/Dockerfile" "${build_dir}" -q >/dev/null
+  if ! docker build -t rana -f "${build_dir}/Dockerfile" "${build_dir}" -q >/dev/null; then
+    rm -rf "${build_dir}"
+    fail "Failed to build rana Docker image — check Docker daemon and internet connectivity"
+  fi
   rm -rf "${build_dir}"
   ok "rana image ready"
 
@@ -338,7 +372,9 @@ create_wallet_rest() {
   wait_wallet_unlocker "$rest_port" || fail "${node} WalletUnlocker not responding"
 
   local seed_response
-  seed_response="$(curl -sk "https://127.0.0.1:${rest_port}/v1/genseed")"
+  if ! seed_response="$(curl -sk --connect-timeout 10 --max-time 30 "https://127.0.0.1:${rest_port}/v1/genseed")"; then
+    fail "${node}: curl failed reaching LND REST API on port ${rest_port} — is lnd running?"
+  fi
   local mnemonic
   mnemonic="$(echo "$seed_response" | jq -c '.cipher_seed_mnemonic')"
 
@@ -353,8 +389,10 @@ create_wallet_rest() {
   pass_b64="$(echo -n "$WALLET_PASS" | base64)"
 
   local init_response
-  init_response="$(curl -sk -X POST "https://127.0.0.1:${rest_port}/v1/initwallet" \
-    -d "{\"wallet_password\":\"${pass_b64}\",\"cipher_seed_mnemonic\":${mnemonic}}")"
+  if ! init_response="$(curl -sk --connect-timeout 10 --max-time 30 -X POST "https://127.0.0.1:${rest_port}/v1/initwallet" \
+    -d "{\"wallet_password\":\"${pass_b64}\",\"cipher_seed_mnemonic\":${mnemonic}}")"; then
+    fail "${node}: curl failed during wallet init on port ${rest_port}"
+  fi
 
   if echo "$init_response" | jq -e '.admin_macaroon' >/dev/null 2>&1; then
     ok "${node} wallet created — seed at ${node}/data/seed.txt"
@@ -367,6 +405,8 @@ create_wallet_rest() {
 
 ###############################################################################
 #  STEP 1 — Preflight checks
+#  Fail fast if Docker or bitcoind aren't available. Running the full setup
+#  only to fail midway wastes time and leaves partial state to clean up.
 ###############################################################################
 step_preflight() {
   log "1/8" "Preflight checks"
@@ -392,6 +432,8 @@ step_preflight() {
 
 ###############################################################################
 #  STEP 2 — Dependencies
+#  jq is needed to parse LND REST API JSON responses; curl to call them.
+#  Both are lightweight and safe to auto-install.
 ###############################################################################
 step_deps() {
   log "2/8" "Checking dependencies (jq, curl)"
@@ -415,6 +457,10 @@ step_deps() {
 
 ###############################################################################
 #  STEP 3 — Clean environment (bitcoind untouched)
+#  Remove all containers, volumes, and generated configs so we start fresh.
+#  bitcoind is NOT touched — it keeps its chain, wallets, and mined blocks.
+#  LND data dirs may be owned by root (Docker), so we use an alpine container
+#  to delete them reliably.
 ###############################################################################
 step_clean() {
   log "3/8" "Cleaning environment (bitcoind NOT touched)"
@@ -440,6 +486,9 @@ step_clean() {
 
 ###############################################################################
 #  STEP 4 — Ask wallet password
+#  The same password is used for both LND wallets and (by default) RTL login.
+#  If WALLET_PASS is already set in .env, skip the interactive prompt so the
+#  script can run unattended.
 ###############################################################################
 step_password() {
   log "4/8" "Wallet password for LND"
@@ -472,6 +521,9 @@ step_password() {
 
 ###############################################################################
 #  STEP 5 — Write configs + start LND containers
+#  Generate all config files and docker-compose.yml, then start only the LND
+#  containers. RTL and the relay start later (step 6) because they need
+#  macaroon files that don't exist until wallets are created.
 ###############################################################################
 step_configs_and_start() {
   log "5/8" "Writing configs and starting LND containers"
@@ -546,6 +598,10 @@ EOF
 
 ###############################################################################
 #  STEP 6 — Create wallets + enable auto-unlock + start RTL & relay
+#  Create wallets via REST API, then rewrite lnd.conf with the auto-unlock
+#  password file and restart. This two-phase approach is needed because LND
+#  only exposes the WalletUnlocker gRPC before a wallet exists. After restart,
+#  macaroons are available and RTL + relay can start.
 ###############################################################################
 step_wallets_and_unlock() {
   log "6/8" "Creating wallets, enabling auto-unlock, starting RTL"
@@ -574,7 +630,10 @@ step_wallets_and_unlock() {
 }
 
 ###############################################################################
-#  STEP 7 — Generate Nostr keys + configure and start Mostro
+#  STEP 7 — Configure Nostr key and start Mostro
+#  Mostro needs a Nostr identity. We support three paths: key from .env,
+#  interactive paste, or auto-generation with rana. After the key is set,
+#  we copy lnd1's TLS cert and admin macaroon so Mostro can talk to it.
 ###############################################################################
 step_mostro() {
   log "7/8" "Setting up Mostro (P2P exchange on lnd1)"
@@ -605,8 +664,12 @@ step_mostro() {
   write_mostro_config
   ok "Mostro settings.toml written"
 
-  docker cp lnd1:/root/.lnd/tls.cert "${BASE_DIR}/mostro/lnd/tls.cert"
-  docker cp lnd1:/root/.lnd/data/chain/bitcoin/regtest/admin.macaroon "${BASE_DIR}/mostro/lnd/admin.macaroon"
+  if ! docker cp lnd1:/root/.lnd/tls.cert "${BASE_DIR}/mostro/lnd/tls.cert"; then
+    fail "Could not copy tls.cert from lnd1 — is the container running? (docker ps)"
+  fi
+  if ! docker cp lnd1:/root/.lnd/data/chain/bitcoin/regtest/admin.macaroon "${BASE_DIR}/mostro/lnd/admin.macaroon"; then
+    fail "Could not copy admin.macaroon from lnd1 — wallet may not have been created"
+  fi
   chmod -R a+r "${BASE_DIR}/mostro/lnd"
   chmod a+rwx "${BASE_DIR}/mostro"
   ok "LND credentials copied for Mostro"
@@ -629,6 +692,9 @@ step_mostro() {
 
 ###############################################################################
 #  STEP 8 — Fund wallets + open channel + rebalance
+#  Send on-chain BTC from bitcoind's miner wallet to both LND nodes, open a
+#  channel from lnd1→lnd2, then push half the capacity to lnd2 so the channel
+#  is balanced ~50/50. This gives both sides liquidity for testing payments.
 ###############################################################################
 step_fund_and_channel() {
   log "8/8" "Funding wallets and opening channel"
@@ -668,6 +734,28 @@ step_fund_and_channel() {
   ok "Channel balanced ~2.5 BTC each side"
 }
 
+# ── Shell aliases ─────────────────────────────────────────────────────────────
+# Install mostro-logs as a permanent bash function so the user can check
+# Mostro output from any directory without remembering the full docker command.
+
+install_shell_commands() {
+  local bashrc="${HOME}/.bashrc"
+  local marker="# --- mostro-regtest-aliases ---"
+
+  # Remove previous version if it exists, then append fresh
+  if grep -qF "${marker}" "${bashrc}" 2>/dev/null; then
+    sed -i "/${marker}/,/${marker}/d" "${bashrc}"
+  fi
+
+  cat >> "${bashrc}" <<EOF
+${marker}
+mostro-logs() { docker compose -f "${BASE_DIR}/docker-compose.yml" logs --tail 100 -f mostro; }
+${marker}
+EOF
+
+  ok "mostro-logs command installed (run: source ~/.bashrc or open a new terminal)"
+}
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 show_summary() {
@@ -699,10 +787,10 @@ show_summary() {
 
   echo
   echo "  Useful commands:"
+  echo "    mostro-logs  Shows last 100 lines + follows in real time"
   echo "    lncli1:  docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd1_rpc]} <cmd>"
   echo "    lncli2:  docker exec lnd2 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd2_rpc]} <cmd>"
   echo "    logs:    cd ${BASE_DIR} && docker compose logs -f"
-  echo "    mostro:  cd ${BASE_DIR} && docker compose logs -f mostro"
   echo
 }
 
@@ -717,6 +805,7 @@ main() {
   step_wallets_and_unlock
   step_mostro
   step_fund_and_channel
+  install_shell_commands
   show_summary
 }
 

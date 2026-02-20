@@ -4,4 +4,5 @@ lnd2/data/
 lnd1/lnd.conf
 lnd2/lnd.conf
 rtl/
+mostro/
 docker-compose.yml
