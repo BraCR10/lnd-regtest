@@ -95,6 +95,7 @@ declare -A FUND_BTC=(
 WALLET_PASS="${WALLET_PASS:-}"
 MOSTRO_NSEC=""
 MOSTRO_NPUB=""
+MOSTRO_HEX=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -321,6 +322,7 @@ DOCKERFILE
 
   MOSTRO_NSEC="$(echo "$output" | grep -oP 'nsec1[a-z0-9]+' | head -1)"
   MOSTRO_NPUB="$(echo "$output" | grep -oP 'npub1[a-z0-9]+' | head -1)"
+  MOSTRO_HEX="$(echo "$output" | grep -oP '(?<=Hex public key:\s{3})[0-9a-f]+' | head -1)"
 
   if [[ -z "$MOSTRO_NSEC" || -z "$MOSTRO_NPUB" ]]; then
     fail "Could not generate Nostr keys — rana output: ${output}"
@@ -534,8 +536,6 @@ services:
     network_mode: host
     volumes:
       - ./mostro:/config
-      - ./lnd1/data/tls.cert:/config/lnd/tls.cert:ro
-      - ./lnd1/data/data/chain/bitcoin/regtest/admin.macaroon:/config/lnd/admin.macaroon:ro
 EOF
   ok "docker-compose.yml written"
 
@@ -605,6 +605,12 @@ step_mostro() {
   write_mostro_config
   ok "Mostro settings.toml written"
 
+  docker cp lnd1:/root/.lnd/tls.cert "${BASE_DIR}/mostro/lnd/tls.cert"
+  docker cp lnd1:/root/.lnd/data/chain/bitcoin/regtest/admin.macaroon "${BASE_DIR}/mostro/lnd/admin.macaroon"
+  chmod -R a+r "${BASE_DIR}/mostro/lnd"
+  chmod a+rwx "${BASE_DIR}/mostro"
+  ok "LND credentials copied for Mostro"
+
   docker compose -f "${BASE_DIR}/docker-compose.yml" up -d mostro
   sleep 3
   ok "Mostro started (connected to lnd1)"
@@ -613,6 +619,10 @@ step_mostro() {
     echo
     echo -e "  \033[1;33mMostro public key (npub):\033[0m"
     echo -e "  \033[1;32m${MOSTRO_NPUB}\033[0m"
+    if [[ -n "${MOSTRO_HEX}" ]]; then
+      echo -e "  \033[1;33mMostro public key (hex):\033[0m"
+      echo -e "  \033[1;32m${MOSTRO_HEX}\033[0m"
+    fi
     echo
   fi
 }
@@ -676,7 +686,8 @@ show_summary() {
   echo
   echo "  Mostro (P2P exchange on lnd1):"
   echo "    Nostr relay: ws://127.0.0.1:${MOSTRO_RELAY_PORT}"
-  echo "    Public key:  ${MOSTRO_NPUB}"
+  echo "    Public key (npub): ${MOSTRO_NPUB}"
+  echo "    Public key (hex):  ${MOSTRO_HEX}"
   echo "    Private key: ${BASE_DIR}/mostro/nostr-private.txt"
   echo
 
