@@ -1,3 +1,4 @@
+.env
 lnd1/data/
 lnd2/data/
 lnd1/lnd.conf
