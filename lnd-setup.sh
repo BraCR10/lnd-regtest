@@ -2,24 +2,24 @@
 set -euo pipefail
 
 ###############################################################################
-#  lnd-setup.sh — Lightning Network (2 nodos regtest)
+#  lnd-setup.sh — Lightning Network (2 regtest nodes)
 #
-#  Usa network_mode: host para evitar problemas de firewall Docker.
-#  Ambos nodos corren en el host con puertos diferentes.
+#  Uses network_mode: host to avoid Docker firewall issues.
+#  Both nodes run on the host with different ports.
 #
-#  Orden:
-#    1. Dependencias
-#    2. Limpieza LND (bitcoind NO se toca)
-#    3. Pedir contrasena
-#    4. Configs SIN auto-unlock
-#    5. Contenedores
-#    6. Crear wallets via REST API
-#    7. Agregar auto-unlock + restart
-#    8. Fondeo desde miner
-#    9. Canal 5 BTC + balance 2.5/2.5
+#  Steps:
+#    1. Dependencies
+#    2. Clean LND environment (bitcoind is NOT touched)
+#    3. Ask wallet password
+#    4. Write configs without auto-unlock
+#    5. Start containers
+#    6. Create wallets via REST API
+#    7. Enable auto-unlock + restart
+#    8. Fund wallets from miner
+#    9. Open 5 BTC channel + rebalance 2.5/2.5
 ###############################################################################
 
-# ── Rutas y constantes ──────────────────────────────────────────────────────
+# ── Paths and constants ─────────────────────────────────────────────────────
 BASE_DIR="${HOME}/BTC/lnd"
 LND_IMAGE="lightninglabs/lnd:v0.20.1-beta"
 
@@ -33,7 +33,7 @@ MINER_WALLET="miner"
 ZMQ_BLOCK="tcp://${BITCOIND_HOST}:28332"
 ZMQ_TX="tcp://${BITCOIND_HOST}:28333"
 
-# Puertos (host network — cada nodo usa puertos distintos)
+# Ports (host network — each node uses different ports)
 LND1_LISTEN=9735
 LND1_RPC=10009
 LND1_REST=8080
@@ -67,7 +67,7 @@ mine_blocks() {
 
 wait_ready() {
   local node="$1" rpc_port="$2" i=0
-  echo "  Esperando ${node}..."
+  echo "  Waiting for ${node}..."
   while [ $i -lt 120 ]; do
     if docker exec "$node" lncli --network=regtest --rpcserver=127.0.0.1:${rpc_port} getinfo >/dev/null 2>&1; then
       return 0
@@ -121,20 +121,20 @@ EOF
 }
 
 ###############################################################################
-#  PASO 1 — Dependencias
+#  STEP 1 — Dependencies
 ###############################################################################
 step_deps() {
-  log "1/9" "Instalando dependencias"
+  log "1/9" "Installing dependencies"
   sudo apt-get update -qq
   sudo apt-get install -y -qq jq curl >/dev/null
-  ok "jq y curl listos"
+  ok "jq and curl ready"
 }
 
 ###############################################################################
-#  PASO 2 — Limpieza (solo LND, bitcoind intacto)
+#  STEP 2 — Clean (LND only, bitcoind untouched)
 ###############################################################################
 step_clean() {
-  log "2/9" "Limpiando entorno LND (bitcoind NO se toca)"
+  log "2/9" "Cleaning LND environment (bitcoind NOT touched)"
   mkdir -p "${BASE_DIR}"
   cd "${BASE_DIR}"
 
@@ -149,39 +149,39 @@ step_clean() {
   rm -f docker-compose.yml 2>/dev/null || true
 
   mkdir -p lnd1/data lnd2/data
-  ok "Directorios limpios"
+  ok "Directories clean"
 }
 
 ###############################################################################
-#  PASO 3 — Pedir contrasena
+#  STEP 3 — Ask wallet password
 ###############################################################################
 step_password() {
-  log "3/9" "Contrasena para wallets LND"
+  log "3/9" "Wallet password for LND"
   echo
-  read -s -p "  Ingresa contrasena (min 8 chars): " WALLET_PASS
+  read -s -p "  Enter password (min 8 chars): " WALLET_PASS
   echo
-  read -s -p "  Confirma contrasena: " pass_confirm
+  read -s -p "  Confirm password: " pass_confirm
   echo
 
   if [ "$WALLET_PASS" != "$pass_confirm" ]; then
-    fail "Las contrasenas no coinciden"
+    fail "Passwords do not match"
   fi
   if [ ${#WALLET_PASS} -lt 8 ]; then
-    fail "Minimo 8 caracteres"
+    fail "Minimum 8 characters"
   fi
-  ok "Contrasena aceptada"
+  ok "Password accepted"
 }
 
 ###############################################################################
-#  PASO 4 — Configs SIN auto-unlock
+#  STEP 4 — Configs without auto-unlock
 ###############################################################################
 step_configs_initial() {
-  log "4/9" "Configuraciones iniciales (sin auto-unlock)"
+  log "4/9" "Writing initial configs (no auto-unlock)"
   cd "${BASE_DIR}"
 
   write_lnd_conf lnd1 "${LND1_LISTEN}" "${LND1_RPC}" "${LND1_REST}"
   write_lnd_conf lnd2 "${LND2_LISTEN}" "${LND2_RPC}" "${LND2_REST}"
-  ok "lnd1/lnd.conf y lnd2/lnd.conf"
+  ok "lnd1/lnd.conf and lnd2/lnd.conf"
 
   cat > docker-compose.yml <<EOF
 services:
@@ -207,25 +207,25 @@ EOF
 }
 
 ###############################################################################
-#  PASO 5 — Contenedores
+#  STEP 5 — Start containers
 ###############################################################################
 step_start() {
-  log "5/9" "Iniciando contenedores"
+  log "5/9" "Starting containers"
   cd "${BASE_DIR}"
   docker compose up -d
   sleep 3
-  ok "lnd1 y lnd2 corriendo"
+  ok "lnd1 and lnd2 running"
 }
 
 ###############################################################################
-#  PASO 6 — Crear wallets via REST API
+#  STEP 6 — Create wallets via REST API
 ###############################################################################
 create_wallet_rest() {
   local node="$1" rest_port="$2"
   local data_dir="${BASE_DIR}/${node}/data"
 
-  echo "  Esperando WalletUnlocker en ${node}..."
-  wait_wallet_unlocker "$rest_port" || fail "${node} WalletUnlocker no responde"
+  echo "  Waiting for WalletUnlocker on ${node}..."
+  wait_wallet_unlocker "$rest_port" || fail "${node} WalletUnlocker not responding"
 
   local seed_response
   seed_response="$(curl -sk "https://127.0.0.1:${rest_port}/v1/genseed")"
@@ -233,7 +233,7 @@ create_wallet_rest() {
   mnemonic="$(echo "$seed_response" | jq -c '.cipher_seed_mnemonic')"
 
   if [ "$mnemonic" = "null" ] || [ -z "$mnemonic" ]; then
-    fail "${node}: no se pudo generar seed — $(echo "$seed_response")"
+    fail "${node}: could not generate seed — $(echo "$seed_response")"
   fi
 
   echo "$seed_response" | jq -r '.cipher_seed_mnemonic[]' > "${data_dir}/seed.txt"
@@ -247,23 +247,23 @@ create_wallet_rest() {
     -d "{\"wallet_password\":\"${pass_b64}\",\"cipher_seed_mnemonic\":${mnemonic}}")"
 
   if echo "$init_response" | jq -e '.admin_macaroon' >/dev/null 2>&1; then
-    ok "${node} wallet creada — seed en ${node}/data/seed.txt"
+    ok "${node} wallet created — seed at ${node}/data/seed.txt"
   else
-    fail "${node}: error creando wallet — $(echo "$init_response")"
+    fail "${node}: error creating wallet — $(echo "$init_response")"
   fi
 }
 
 step_wallets() {
-  log "6/9" "Creando wallets via REST API"
+  log "6/9" "Creating wallets via REST API"
   create_wallet_rest lnd1 "${LND1_REST}"
   create_wallet_rest lnd2 "${LND2_REST}"
 }
 
 ###############################################################################
-#  PASO 7 — Agregar auto-unlock + restart
+#  STEP 7 — Enable auto-unlock + restart
 ###############################################################################
 step_enable_autounlock() {
-  log "7/9" "Activando auto-unlock y reiniciando"
+  log "7/9" "Enabling auto-unlock and restarting"
   cd "${BASE_DIR}"
 
   for node in lnd1 lnd2; do
@@ -277,16 +277,16 @@ step_enable_autounlock() {
   docker compose restart
   sleep 5
 
-  wait_ready lnd1 "${LND1_RPC}" || fail "lnd1 no responde"
-  wait_ready lnd2 "${LND2_RPC}" || fail "lnd2 no responde"
-  ok "Ambos nodos desbloqueados y listos"
+  wait_ready lnd1 "${LND1_RPC}" || fail "lnd1 not responding"
+  wait_ready lnd2 "${LND2_RPC}" || fail "lnd2 not responding"
+  ok "Both nodes unlocked and ready"
 }
 
 ###############################################################################
-#  PASO 8 — Fondear wallets desde miner
+#  STEP 8 — Fund wallets from miner
 ###############################################################################
 step_fund() {
-  log "8/9" "Fondeando wallets desde miner"
+  log "8/9" "Funding wallets from miner"
 
   if ! bcli listwallets | jq -e ".[] | select(.==\"${MINER_WALLET}\")" >/dev/null 2>&1; then
     if bcli listwalletdir | jq -e ".wallets[].name | select(.==\"${MINER_WALLET}\")" >/dev/null 2>&1; then
@@ -306,24 +306,24 @@ step_fund() {
   mine_blocks 6
   sleep 3
 
-  ok "lnd1 recibio ${FUND_LND1_BTC} BTC, lnd2 recibio ${FUND_LND2_BTC} BTC"
+  ok "lnd1 received ${FUND_LND1_BTC} BTC, lnd2 received ${FUND_LND2_BTC} BTC"
 }
 
 ###############################################################################
-#  PASO 9 — Canal 5 BTC + equilibrar 2.5/2.5
+#  STEP 9 — Open 5 BTC channel + rebalance 2.5/2.5
 ###############################################################################
 step_channel() {
-  log "9/9" "Abriendo canal de 5 BTC y equilibrando"
+  log "9/9" "Opening 5 BTC channel and rebalancing"
 
   local pub2
   pub2="$(lncli2 getinfo | jq -r '.identity_pubkey')"
 
-  # Con host network, conectar via 127.0.0.1 con el puerto de lnd2
+  # Host network: connect via 127.0.0.1 with lnd2 port
   lncli1 connect "${pub2}@127.0.0.1:${LND2_LISTEN}" >/dev/null 2>&1 || true
   sleep 2
 
   lncli1 openchannel --node_key="${pub2}" --local_amt="${CHANNEL_SATS}" >/dev/null
-  ok "Canal abierto (pendiente confirmacion)"
+  ok "Channel opened (pending confirmation)"
 
   mine_blocks 6
   sleep 5
@@ -331,31 +331,31 @@ step_channel() {
   local invoice
   invoice="$(lncli2 addinvoice --amt="${REBALANCE_SATS}" --memo="rebalance" | jq -r '.payment_request')"
   lncli1 payinvoice --force "${invoice}" >/dev/null
-  ok "Canal equilibrado ~2.5 BTC cada lado"
+  ok "Channel balanced ~2.5 BTC each side"
 }
 
 ###############################################################################
-#  Resumen final
+#  Summary
 ###############################################################################
 show_summary() {
   echo
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  SETUP COMPLETO"
+  echo "  SETUP COMPLETE"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo
-  echo "  Seeds guardadas en:"
+  echo "  Seeds saved at:"
   echo "    ${BASE_DIR}/lnd1/data/seed.txt"
   echo "    ${BASE_DIR}/lnd2/data/seed.txt"
   echo
 
-  echo "  Balances del canal:"
+  echo "  Channel balances:"
   echo "  ── lnd1 ──"
   lncli1 listchannels | jq '.channels[] | {capacity, local_balance, remote_balance}'
   echo "  ── lnd2 ──"
   lncli2 listchannels | jq '.channels[] | {capacity, local_balance, remote_balance}'
 
   echo
-  echo "  Comandos utiles:"
+  echo "  Useful commands:"
   echo "    lncli1:  docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:${LND1_RPC} <cmd>"
   echo "    lncli2:  docker exec lnd2 lncli --network=regtest --rpcserver=127.0.0.1:${LND2_RPC} <cmd>"
   echo "    logs:    cd ${BASE_DIR} && docker compose logs -f"
