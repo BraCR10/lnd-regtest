@@ -1,0 +1,5 @@
+lnd1/data/
+lnd2/data/
+lnd1/lnd.conf
+lnd2/lnd.conf
+docker-compose.yml
