@@ -67,6 +67,12 @@ source "${BASE_DIR}/.env"
 : "${BITCOIND_RPC_USER:?Set BITCOIND_RPC_USER in .env}"
 : "${BITCOIND_RPC_PASS:?Set BITCOIND_RPC_PASS in .env}"
 
+if [[ "${BITCOIND_RPC_USER}" == "your_rpc_user" || "${BITCOIND_RPC_PASS}" == "your_rpc_password" ]]; then
+  echo "Error: .env still has placeholder values."
+  echo "Edit .env and set BITCOIND_RPC_USER and BITCOIND_RPC_PASS to match your bitcoin.conf."
+  exit 1
+fi
+
 BITCOIND_HOST="${BITCOIND_HOST:-127.0.0.1}"
 BITCOIND_RPC_PORT="${BITCOIND_RPC_PORT:-18443}"
 MINER_WALLET="${MINER_WALLET:-miner}"
@@ -514,7 +520,7 @@ step_deps() {
   done
 
   if (( ${#missing[@]} > 0 )); then
-    echo "  Installing: ${missing[*]}"
+    echo "  Installing ${missing[*]} (requires sudo to apt-get install)"
     sudo apt-get update -qq
     sudo apt-get install -y -qq "${missing[@]}" >/dev/null
     ok "${missing[*]} installed"
@@ -826,7 +832,7 @@ step_domains() {
   command -v certbot &>/dev/null || to_install+=(certbot python3-certbot-nginx)
 
   if (( ${#to_install[@]} > 0 )); then
-    echo "  Installing: ${to_install[*]}"
+    echo "  Installing ${to_install[*]} (requires sudo to apt-get install)"
     sudo apt-get update -qq
     sudo apt-get install -y -qq "${to_install[@]}" >/dev/null
     ok "${to_install[*]} installed"
@@ -836,6 +842,7 @@ step_domains() {
 
   # ── Open ports 80/443 in ufw ──
   if command -v ufw &>/dev/null; then
+    echo "  Opening firewall ports 80 and 443 (requires sudo for ufw)"
     sudo ufw allow 80/tcp >/dev/null 2>&1 || true
     sudo ufw allow 443/tcp >/dev/null 2>&1 || true
     ok "Firewall: ports 80 and 443 open"
@@ -844,7 +851,7 @@ step_domains() {
   # ── RTL domain ──
   if [[ -n "${RTL_DOMAIN}" ]]; then
     if [[ ! -d "/etc/letsencrypt/live/${RTL_DOMAIN}" ]]; then
-      echo "  Obtaining SSL certificate for ${RTL_DOMAIN}..."
+      echo "  Obtaining SSL certificate for ${RTL_DOMAIN} (requires sudo for certbot)"
       sudo certbot certonly --nginx -d "${RTL_DOMAIN}" \
         --non-interactive --agree-tos -m "admin@${RTL_DOMAIN}"
       ok "SSL certificate obtained for ${RTL_DOMAIN}"
@@ -852,6 +859,7 @@ step_domains() {
       ok "SSL certificate already exists for ${RTL_DOMAIN}"
     fi
 
+    echo "  Writing nginx config for ${RTL_DOMAIN} (requires sudo to write /etc/nginx)"
     write_rtl_nginx_config
     sudo ln -sf /etc/nginx/sites-available/rtl /etc/nginx/sites-enabled/rtl
     ok "nginx config written for ${RTL_DOMAIN}"
@@ -860,7 +868,7 @@ step_domains() {
   # ── LNURL domain ──
   if [[ -n "${LNURL_DOMAIN}" ]]; then
     if [[ ! -d "/etc/letsencrypt/live/${LNURL_DOMAIN}" ]]; then
-      echo "  Obtaining SSL certificate for ${LNURL_DOMAIN}..."
+      echo "  Obtaining SSL certificate for ${LNURL_DOMAIN} (requires sudo for certbot)"
       sudo certbot certonly --nginx -d "${LNURL_DOMAIN}" \
         --non-interactive --agree-tos -m "admin@${LNURL_DOMAIN}"
       ok "SSL certificate obtained for ${LNURL_DOMAIN}"
@@ -868,6 +876,7 @@ step_domains() {
       ok "SSL certificate already exists for ${LNURL_DOMAIN}"
     fi
 
+    echo "  Writing nginx config for ${LNURL_DOMAIN} (requires sudo to write /etc/nginx)"
     write_nginx_config
     sudo ln -sf /etc/nginx/sites-available/lnurl /etc/nginx/sites-enabled/lnurl
     ok "nginx config written for ${LNURL_DOMAIN}"
@@ -919,6 +928,7 @@ step_domains() {
   fi
 
   # ── Final nginx reload ──
+  echo "  Validating and reloading nginx (requires sudo)"
   sudo nginx -t >/dev/null 2>&1 || fail "nginx config invalid"
   sudo systemctl reload nginx
   ok "nginx reloaded"
@@ -1000,6 +1010,74 @@ show_summary() {
   echo
 }
 
+# ── Summary file ──────────────────────────────────────────────────────────────
+# Write a plain-text summary of everything created during setup so the user
+# can reference it later without scrolling through terminal output.
+
+write_summary_file() {
+  local f="${BASE_DIR}/summary.txt"
+  local ts
+  ts="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  cat > "$f" <<EOF
+===============================================
+  MOSTRO REGTEST — SETUP SUMMARY
+  Generated: ${ts}
+===============================================
+
+SEEDS
+  lnd1: ${BASE_DIR}/lnd1/data/seed.txt
+  lnd2: ${BASE_DIR}/lnd2/data/seed.txt
+
+RTL WEB UI
+EOF
+
+  if [[ -n "${RTL_DOMAIN}" ]]; then
+    echo "  URL: https://${RTL_DOMAIN}" >> "$f"
+  else
+    echo "  URL: http://127.0.0.1:${RTL_PORT}" >> "$f"
+    echo "  SSH tunnel: ssh -L ${RTL_PORT}:127.0.0.1:${RTL_PORT} user@your-vps" >> "$f"
+  fi
+
+  cat >> "$f" <<EOF
+
+MOSTRO (P2P exchange on lnd1)
+  Relays: ${MOSTRO_RELAYS}
+  Private key: ${BASE_DIR}/mostro/nostr-private.txt
+EOF
+
+  if [[ -n "${MOSTRO_NPUB}" ]]; then
+    echo "  Public key (npub): ${MOSTRO_NPUB}" >> "$f"
+  fi
+  if [[ -n "${MOSTRO_HEX}" ]]; then
+    echo "  Public key (hex):  ${MOSTRO_HEX}" >> "$f"
+  fi
+
+  if [[ -n "${LNURL_DOMAIN}" ]]; then
+    echo "" >> "$f"
+    echo "LIGHTNING ADDRESSES" >> "$f"
+    IFS=',' read -ra file_users <<< "${LNURL_USERNAMES}"
+    for uname in "${file_users[@]}"; do
+      uname="$(echo "$uname" | xargs)"
+      [[ -z "$uname" ]] && continue
+      echo "  ${uname}@${LNURL_DOMAIN}" >> "$f"
+      echo "    https://${LNURL_DOMAIN}/.well-known/lnurlp/${uname}" >> "$f"
+    done
+  fi
+
+  cat >> "$f" <<EOF
+
+USEFUL COMMANDS
+  mostro-logs                     Last 100 lines + follow
+  docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd1_rpc]} <cmd>
+  docker exec lnd2 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd2_rpc]} <cmd>
+  cd ${BASE_DIR} && docker compose logs -f
+EOF
+
+  chmod 600 "$f"
+  ok "Summary written to ${f}"
+}
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 main() {
@@ -1013,6 +1091,7 @@ main() {
   step_fund_and_channel
   step_domains
   install_shell_commands
+  write_summary_file
   show_summary
 }
 

@@ -90,14 +90,19 @@ LNURL_DOMAIN=yourdomain.com
 LNURL_USERNAMES=admin         # optional, defaults to "admin"
 ```
 
-What step 9 does:
+What step 9 does (shared for all domains):
 
 1. Installs nginx + certbot (skips if already installed)
 2. Opens ports 80/443 in ufw
+
+What step 9 does (when `LNURL_DOMAIN` is set):
+
 3. Obtains an SSL certificate via `certbot certonly --nginx`
 4. Writes an nginx reverse proxy config (HTTPS → satdress on `127.0.0.1:17422`)
 5. Writes satdress `.env` and starts the satdress Docker container
 6. Auto-registers `admin@yourdomain.com` via the satdress API, pointing to lnd1
+
+If `RTL_DOMAIN` is also set, step 9 additionally obtains a cert and writes an nginx config for RTL (see [rtl.md](rtl.md)).
 
 ## Architecture
 
