@@ -76,10 +76,10 @@ FUND_LND2_BTC="${FUND_LND2_BTC:-3}"
 CHANNEL_SATS="${CHANNEL_SATS:-500000000}"
 REBALANCE_SATS="${REBALANCE_SATS:-250000000}"
 
-RTL_IMAGE="${RTL_IMAGE:-shahanafarooqui/rtl:v0.15.8}"
+RTL_IMAGE="${RTL_IMAGE:-shahanafarooqui/rtl:latest}"
 RTL_PORT="${RTL_PORT:-3000}"
 
-MOSTRO_IMAGE="${MOSTRO_IMAGE:-mostrop2p/mostro:v0.16.3}"
+MOSTRO_IMAGE="${MOSTRO_IMAGE:-mostrop2p/mostro:latest}"
 MOSTRO_RELAY_IMAGE="${MOSTRO_RELAY_IMAGE:-scsibug/nostr-rs-relay}"
 MOSTRO_RELAY_PORT="${MOSTRO_RELAY_PORT:-7000}"
 MOSTRO_RELAYS="${MOSTRO_RELAYS:-wss://nos.lol,wss://relay.mostro.network}"
