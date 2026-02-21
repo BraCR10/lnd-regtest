@@ -861,6 +861,19 @@ step_fund_and_channel() {
 
   mine_blocks 6
   sleep 5
+
+  # Balance lnd3 channels (~1.25 BTC each side)
+  local lnd3_rebalance=$(( LND3_CHANNEL_SATS / 2 ))
+
+  local inv_lnd1
+  inv_lnd1="$(lncli lnd1 addinvoice --amt="${lnd3_rebalance}" --memo="rebalance lnd3-lnd1" | jq -r '.payment_request')"
+  lncli lnd3 payinvoice --force "${inv_lnd1}" >/dev/null
+  ok "lnd3↔lnd1 channel balanced ~1.25 BTC each side"
+
+  local inv_lnd2
+  inv_lnd2="$(lncli lnd2 addinvoice --amt="${lnd3_rebalance}" --memo="rebalance lnd3-lnd2" | jq -r '.payment_request')"
+  lncli lnd3 payinvoice --force "${inv_lnd2}" >/dev/null
+  ok "lnd3↔lnd2 channel balanced ~1.25 BTC each side"
 }
 
 ###############################################################################
