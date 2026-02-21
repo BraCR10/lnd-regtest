@@ -26,10 +26,8 @@ nano .env
 | `RTL_PORT` | No | `3000` | RTL web UI port |
 | `RTL_PASSWORD` | No | *(WALLET_PASS)* | RTL login password |
 | `MOSTRO_IMAGE` | No | `mostrop2p/mostro:latest` | Mostro Docker image |
-| `MOSTRO_RELAY_IMAGE` | No | `scsibug/nostr-rs-relay` | Nostr relay Docker image |
-| `MOSTRO_RELAY_PORT` | No | `7000` | Nostr relay port |
 | `MOSTRO_NSEC_PRIVKEY` | No | *(prompted)* | Nostr private key for Mostro |
-| `MOSTRO_RELAYS` | No | `wss://nos.lol,wss://relay.mostro.network` | Extra relays (comma-separated, added alongside local) |
+| `MOSTRO_RELAYS` | No | `wss://nos.lol,wss://relay.mostro.network` | Nostr relays (comma-separated) |
 | `LNURL_DOMAIN` | No | *(disabled)* | Domain for Lightning Address (enables step 9) |
 | `LNURL_USERNAMES` | No | `admin` | Comma-separated usernames (`admin,user2`) |
 | `SATDRESS_PORT` | No | `17422` | satdress HTTP port |
@@ -57,9 +55,7 @@ nano .env
 │   └── database/
 ├── mostro/
 │   ├── settings.toml       # generated
-│   ├── nostr-private.txt   # nsec key (chmod 600)
-│   ├── relay-config.toml   # Nostr relay config
-│   └── relay-data/
+│   └── nostr-private.txt   # nsec key (chmod 600)
 └── satdress/               # only if LNURL_DOMAIN is set
     ├── .env                # generated (chmod 600)
     └── data/
@@ -78,7 +74,6 @@ All services bind to `127.0.0.1` only (not accessible from the internet).
 | Service | Port |
 |---------|------|
 | RTL web UI | 3000 |
-| Nostr relay | 7000 |
 | bitcoind P2P | 18444 |
 | bitcoind RPC | 18443 |
 | ZMQ block | 28332 |

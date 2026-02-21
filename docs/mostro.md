@@ -1,6 +1,6 @@
 # Mostro (P2P exchange)
 
-[Mostro](https://github.com/MostroP2P/mostro) is a P2P Bitcoin trading daemon over the Nostr protocol. It runs on lnd1 and uses a local Nostr relay.
+[Mostro](https://github.com/MostroP2P/mostro) is a P2P Bitcoin trading daemon over the Nostr protocol. It runs on lnd1 and connects to external Nostr relays (default: `wss://nos.lol`, `wss://relay.mostro.network`).
 
 ## Nostr key
 
@@ -18,8 +18,6 @@ The private key is saved to `mostro/nostr-private.txt` (chmod 600). The public k
 mostro/
 ├── settings.toml       # generated — Mostro configuration
 ├── nostr-private.txt   # nsec key (chmod 600)
-├── relay-config.toml   # Nostr relay configuration
-├── relay-data/         # Nostr relay database
 └── lnd/
     ├── tls.cert        # copied from lnd1
     └── admin.macaroon  # copied from lnd1

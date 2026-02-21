@@ -5,7 +5,7 @@ Defense in depth — only what's necessary is exposed to the internet:
 | Layer | What it does |
 |-------|--------------|
 | **ufw** | Blocks all incoming traffic except SSH (22) and, if Lightning Address is enabled, HTTP/HTTPS (80/443) |
-| **bind 127.0.0.1** | bitcoind, LND, RTL, Nostr relay, Mostro, and satdress only listen on localhost |
+| **bind 127.0.0.1** | bitcoind, LND, RTL, Mostro, and satdress only listen on localhost |
 | **nginx** | The only service on 0.0.0.0 — reverse proxies HTTPS to satdress, nothing else |
 | **SSH tunnel** | The only way to reach RTL or internal services remotely |
 

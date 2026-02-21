@@ -27,7 +27,7 @@ Steps:
   3. Cleans previous environment (bitcoind is NOT touched)
   4. Prompts for a wallet password
   5. Writes configs, docker-compose.yml, and starts LND containers
-  6. Creates wallets, enables auto-unlock, starts RTL and Nostr relay
+  6. Creates wallets, enables auto-unlock, starts RTL
   7. Loads/prompts/generates Nostr key, configures and starts Mostro on lnd1
   8. Funds wallets and opens a balanced channel
   9. Lightning Address via satdress + nginx (only if LNURL_DOMAIN is set)
@@ -80,8 +80,6 @@ RTL_IMAGE="${RTL_IMAGE:-shahanafarooqui/rtl:v0.15.8}"
 RTL_PORT="${RTL_PORT:-3000}"
 
 MOSTRO_IMAGE="${MOSTRO_IMAGE:-mostrop2p/mostro:latest}"
-MOSTRO_RELAY_IMAGE="${MOSTRO_RELAY_IMAGE:-scsibug/nostr-rs-relay}"
-MOSTRO_RELAY_PORT="${MOSTRO_RELAY_PORT:-7000}"
 MOSTRO_RELAYS="${MOSTRO_RELAYS:-wss://nos.lol,wss://relay.mostro.network}"
 
 ZMQ_BLOCK="tcp://${BITCOIND_HOST}:28332"
@@ -249,36 +247,21 @@ write_rtl_config() {
 EOF
 }
 
-# Local Nostr relay for Mostro. Binds to 127.0.0.1 so it's only reachable
-# locally — Mostro connects to it at ws://127.0.0.1:7000.
-write_relay_config() {
-  mkdir -p "${BASE_DIR}/mostro/relay-data"
-  cat > "${BASE_DIR}/mostro/relay-config.toml" <<EOF
-[info]
-name = "Local Mostro Relay"
 
-[network]
-port = ${MOSTRO_RELAY_PORT}
-address = "127.0.0.1"
-
-[limits]
-max_event_bytes = 131072
-EOF
-}
-
-# Generate Mostro settings.toml. Points at lnd1's gRPC and the local relay.
+# Generate Mostro settings.toml. Points at lnd1's gRPC and external relays.
 # TLS cert and admin macaroon are copied from lnd1 in step 7.
-# External relays from MOSTRO_RELAYS are added alongside the local relay.
 write_mostro_config() {
   mkdir -p "${BASE_DIR}/mostro/lnd"
 
-  # Build TOML relays array: local relay first, then any external relays
-  local relays_toml="'ws://127.0.0.1:${MOSTRO_RELAY_PORT}'"
+  # Build TOML relays array from MOSTRO_RELAYS
+  local relays_toml=""
   if [[ -n "${MOSTRO_RELAYS}" ]]; then
-    IFS=',' read -ra extra_relays <<< "${MOSTRO_RELAYS}"
-    for r in "${extra_relays[@]}"; do
+    IFS=',' read -ra relay_list <<< "${MOSTRO_RELAYS}"
+    for r in "${relay_list[@]}"; do
       r="$(echo "$r" | xargs)"  # trim whitespace
-      [[ -n "$r" ]] && relays_toml+=", '${r}'"
+      [[ -z "$r" ]] && continue
+      [[ -n "$relays_toml" ]] && relays_toml+=", "
+      relays_toml+="'${r}'"
     done
   fi
 
@@ -517,7 +500,7 @@ step_clean() {
   log "3/9" "Cleaning environment (bitcoind NOT touched)"
 
   docker compose -f "${BASE_DIR}/docker-compose.yml" down -v --remove-orphans 2>/dev/null || true
-  docker rm -f "${NODES[@]}" rtl nostr-relay mostro satdress 2>/dev/null || true
+  docker rm -f "${NODES[@]}" rtl mostro satdress 2>/dev/null || true
 
   for node in "${NODES[@]}"; do
     if [[ -d "${BASE_DIR}/${node}" ]]; then
@@ -587,9 +570,6 @@ step_configs_and_start() {
   write_rtl_config
   ok "RTL config written"
 
-  write_relay_config
-  ok "Nostr relay config written"
-
   cat > "${BASE_DIR}/docker-compose.yml" <<EOF
 services:
   lnd1:
@@ -623,15 +603,6 @@ services:
       - ./lnd1/data/data/chain/bitcoin/regtest:/macaroons/lnd1:ro
       - ./lnd2/data/data/chain/bitcoin/regtest:/macaroons/lnd2:ro
 
-  nostr-relay:
-    image: ${MOSTRO_RELAY_IMAGE}
-    container_name: nostr-relay
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./mostro/relay-config.toml:/usr/src/app/config.toml:ro
-      - ./mostro/relay-data:/usr/src/app/db
-
   mostro:
     image: ${MOSTRO_IMAGE}
     container_name: mostro
@@ -651,6 +622,7 @@ EOF
     network_mode: host
     env_file:
       - ./satdress/.env
+    working_dir: /data
     volumes:
       - ./satdress/data:/data
 EOF
@@ -690,9 +662,8 @@ step_wallets_and_unlock() {
   done
   ok "Both nodes unlocked and ready"
 
-  docker compose -f "${BASE_DIR}/docker-compose.yml" up -d rtl nostr-relay
+  docker compose -f "${BASE_DIR}/docker-compose.yml" up -d rtl
   ok "RTL started on http://127.0.0.1:${RTL_PORT}"
-  ok "Nostr relay started on ws://127.0.0.1:${MOSTRO_RELAY_PORT}"
 }
 
 ###############################################################################
@@ -885,27 +856,16 @@ step_lnurl() {
     uname="$(echo "$uname" | xargs)"  # trim whitespace
     [[ -z "$uname" ]] && continue
 
-    local register_payload
-    register_payload="$(cat <<EOJSON
-{
-  "name": "${uname}",
-  "kind": "lnd",
-  "host": "127.0.0.1:${PORTS[lnd1_rest]}",
-  "key": "${mac_hex}",
-  "pak": ""
-}
-EOJSON
-)"
-
     local reg_resp
-    reg_resp="$(curl -s -X POST "http://127.0.0.1:${SATDRESS_PORT}/api/easy/" \
-      -H "Content-Type: application/json" \
-      -d "${register_payload}" 2>/dev/null)" || true
+    reg_resp="$(curl -s -X POST "http://127.0.0.1:${SATDRESS_PORT}/grab" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "name=${uname}&kind=lnd&host=https://127.0.0.1:${PORTS[lnd1_rest]}&key=${mac_hex}" \
+      2>/dev/null)" || true
 
-    if echo "$reg_resp" | jq -e '.ok' >/dev/null 2>&1; then
+    if echo "$reg_resp" | grep -q '"name":"'"${uname}"'"'; then
       ok "Lightning Address registered: ${uname}@${LNURL_DOMAIN}"
     else
-      echo "  Warning: ${uname} registration response: ${reg_resp}"
+      echo "  Warning: ${uname} registration may have failed"
       echo "  You can register manually at http://127.0.0.1:${SATDRESS_PORT}"
     fi
   done
@@ -950,7 +910,7 @@ show_summary() {
   echo "    SSH tunnel: ssh -L ${RTL_PORT}:127.0.0.1:${RTL_PORT} user@your-vps"
   echo
   echo "  Mostro (P2P exchange on lnd1):"
-  echo "    Nostr relay: ws://127.0.0.1:${MOSTRO_RELAY_PORT}"
+  echo "    Relays: ${MOSTRO_RELAYS}"
   echo "    Public key (npub): ${MOSTRO_NPUB}"
   echo "    Public key (hex):  ${MOSTRO_HEX}"
   echo "    Private key: ${BASE_DIR}/mostro/nostr-private.txt"
