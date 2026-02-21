@@ -850,8 +850,14 @@ step_fund_and_channel() {
   sleep 2
 
   lncli lnd3 openchannel --node_key="${pub1}" --local_amt="${LND3_CHANNEL_SATS}" >/dev/null
+  ok "lnd3→lnd1 channel opened (pending confirmation)"
+
+  echo "  Mining blocks to confirm change before second channel..."
+  mine_blocks 6
+  sleep 3
+
   lncli lnd3 openchannel --node_key="${pub2}" --local_amt="${LND3_CHANNEL_SATS}" >/dev/null
-  ok "lnd3 channels opened (2.5 BTC to lnd1, 2.5 BTC to lnd2)"
+  ok "lnd3→lnd2 channel opened (pending confirmation)"
 
   mine_blocks 6
   sleep 5
