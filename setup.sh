@@ -88,7 +88,8 @@ RTL_IMAGE="${RTL_IMAGE:-shahanafarooqui/rtl:v0.15.8}"
 RTL_PORT="${RTL_PORT:-3000}"
 RTL_DOMAIN="${RTL_DOMAIN:-}"
 
-MOSTRO_IMAGE="${MOSTRO_IMAGE:-mostrop2p/mostro:latest}"
+MOSTRO_REPO="${MOSTRO_REPO:-https://github.com/MostroP2P/mostro.git}"
+MOSTRO_SRC="${BASE_DIR}/mostro-src"
 MOSTRO_RELAYS="${MOSTRO_RELAYS:-wss://nos.lol,wss://relay.mostro.network}"
 
 ZMQ_BLOCK="tcp://${BITCOIND_HOST}:28332"
@@ -674,7 +675,10 @@ services:
       - ./lnd3/data/data/chain/bitcoin/regtest:/macaroons/lnd3:ro
 
   mostro:
-    image: ${MOSTRO_IMAGE}
+    build:
+      context: ./mostro-src
+      dockerfile: docker/Dockerfile
+    image: mostro:local
     container_name: mostro
     restart: unless-stopped
     network_mode: host
@@ -746,6 +750,24 @@ step_mostro() {
   log "7/9" "Setting up Mostro (P2P exchange on lnd1)"
 
   mkdir -p "${BASE_DIR}/mostro"
+
+  # Clone or update Mostro source from git (always latest main)
+  if [[ -d "${MOSTRO_SRC}/.git" ]]; then
+    echo "  Updating Mostro source (git pull)..."
+    git -C "${MOSTRO_SRC}" fetch origin main
+    git -C "${MOSTRO_SRC}" reset --hard origin/main
+    ok "Mostro source updated to latest main"
+  else
+    echo "  Cloning Mostro from ${MOSTRO_REPO}..."
+    rm -rf "${MOSTRO_SRC}"
+    git clone --branch main --single-branch "${MOSTRO_REPO}" "${MOSTRO_SRC}"
+    ok "Mostro source cloned"
+  fi
+
+  # Build Docker image from source
+  echo "  Building Mostro Docker image from source (this may take a few minutes)..."
+  docker compose -f "${BASE_DIR}/docker-compose.yml" build --no-cache mostro
+  ok "Mostro Docker image built from source"
 
   if [[ -n "${MOSTRO_NSEC_PRIVKEY:-}" ]]; then
     # Option 1: key from .env
