@@ -2,6 +2,18 @@
 
 [Mostro](https://github.com/MostroP2P/mostro) is a P2P Bitcoin trading daemon over the Nostr protocol. It runs on lnd1 and connects to external Nostr relays (default: `wss://nos.lol`, `wss://relay.mostro.network`).
 
+## Building from source
+
+Mostro is **built from source** (not pulled from Docker Hub). The setup script:
+
+1. Clones the [Mostro repo](https://github.com/MostroP2P/mostro) into `mostro-src/` (or runs `git pull` if it already exists)
+2. Builds the Docker image locally using `docker/Dockerfile` from the repo
+3. Tags it as `mostro:local`
+
+This ensures you always run the latest `main` branch. The first build takes a few minutes (Rust compilation). Subsequent runs of `setup.sh` will pull the latest changes and rebuild.
+
+You can override the repo URL via `MOSTRO_REPO` in `.env`.
+
 ## Nostr key
 
 Mostro needs a Nostr identity (nsec private key). The script handles this in three ways:

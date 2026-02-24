@@ -28,7 +28,7 @@ nano .env
 | `RTL_PORT` | No | `3000` | RTL web UI port |
 | `RTL_PASSWORD` | No | *(WALLET_PASS)* | RTL login password |
 | `RTL_DOMAIN` | No | *(disabled)* | Domain for HTTPS access to RTL (enables nginx reverse proxy) |
-| `MOSTRO_IMAGE` | No | `mostrop2p/mostro:latest` | Mostro Docker image |
+| `MOSTRO_REPO` | No | `https://github.com/MostroP2P/mostro.git` | Mostro git repo (cloned and built from source) |
 | `MOSTRO_NSEC_PRIVKEY` | No | *(prompted)* | Nostr private key for Mostro |
 | `MOSTRO_RELAYS` | No | `wss://nos.lol,wss://relay.mostro.network` | Nostr relays (comma-separated) |
 | `LNURL_DOMAIN` | No | *(disabled)* | Domain for Lightning Address (enables nginx + satdress + certbot) |
@@ -62,6 +62,7 @@ nano .env
 ├── rtl/
 │   ├── RTL-Config.json    # generated
 │   └── database/
+├── mostro-src/             # cloned from git (built locally)
 ├── mostro/
 │   ├── settings.toml       # generated
 │   └── nostr-private.txt   # nsec key (chmod 600)
