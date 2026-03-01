@@ -8,6 +8,9 @@ lnd3/lnd.conf
 rtl/
 mostro/
 mostro-src/
+mostrix-src/
+mostro-cli-src/
+mostro-cli-bin/
 docker-compose.yml
 satdress/
 summary.txt

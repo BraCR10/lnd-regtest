@@ -12,6 +12,9 @@ cp .env.example .env
 nano .env   # set BITCOIND_RPC_USER and BITCOIND_RPC_PASS
 chmod +x setup.sh
 ./setup.sh
+
+# Re-run from a specific step (skips earlier steps)
+./setup.sh --from 7
 ```
 
 The script will prompt for a wallet password (min 8 chars), or set `WALLET_PASS` in `.env` to skip the prompt.
@@ -26,7 +29,7 @@ The script will prompt for a wallet password (min 8 chars), or set `WALLET_PASS`
 | 4/9 | Asks for wallet password (or loads from `.env`) |
 | 5/9 | Writes LND + RTL configs, `docker-compose.yml`, starts LND |
 | 6/9 | Creates wallets, enables auto-unlock, starts RTL |
-| 7/9 | Sets up Mostro: loads/prompts/generates Nostr key, starts Mostro on lnd1 |
+| 7/9 | Sets up Mostro + MostriX: loads/prompts/generates Nostr key, starts Mostro on lnd1, builds MostriX TUI |
 | 8/9 | Funds wallets, opens and balances channels (triangle: lnd1↔lnd2, lnd3↔lnd1, lnd3↔lnd2) |
 | 9/9 | Domains + HTTPS via nginx (skipped if neither `RTL_DOMAIN` nor `LNURL_DOMAIN` is set) |
 
@@ -35,7 +38,7 @@ The script will prompt for a wallet password (min 8 chars), or set `WALLET_PASS`
 - [Prerequisites](docs/prerequisites.md) — Bitcoin Core, Docker, firewall setup
 - [Configuration](docs/configuration.md) — `.env` options, directory structure, ports
 - [RTL (Ride The Lightning)](docs/rtl.md) — web UI access methods (local, SSH tunnel, reverse proxy)
-- [Mostro](docs/mostro.md) — P2P exchange setup, Nostr key options
+- [Mostro + MostriX](docs/mostro.md) — P2P exchange setup, MostriX TUI client, Nostr key options
 - [Security](docs/security.md) — defense-in-depth, port verification
 - [Commands](docs/commands.md) — lncli, logs, mining, Docker management
 - [LNURL and Lightning Address](docs/lnurl.md) — domain, DNS, how the protocol works
@@ -43,6 +46,9 @@ The script will prompt for a wallet password (min 8 chars), or set `WALLET_PASS`
 ## Useful commands
 
 ```bash
+# MostriX — TUI client for Mostro (orders, trades, admin)
+mostrix
+
 # lncli (each node has its own RPC port: 10009, 10010, 10011)
 docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:10009 getinfo
 docker exec lnd3 lncli --network=regtest --rpcserver=127.0.0.1:10011 listchannels

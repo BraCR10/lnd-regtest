@@ -1,5 +1,17 @@
 # Useful commands
 
+## MostriX
+
+MostriX is the TUI client for interacting with Mostro. Launch it with:
+
+```bash
+mostrix
+```
+
+Use arrow keys to navigate tabs and lists, Enter to select, Q to quit. Toggle admin mode with M.
+
+Configuration: `~/.mostrix/settings.toml`
+
 ## lncli
 
 Each LND node has its own RPC port:
@@ -81,4 +93,7 @@ cd ~/BTC/lnd && docker compose down
 
 # Re-run setup from scratch
 cd ~/BTC/lnd && ./setup.sh
+
+# Re-run from a specific step (e.g., rebuild Mostro + MostriX only)
+cd ~/BTC/lnd && ./setup.sh --from 7
 ```

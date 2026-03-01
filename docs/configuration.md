@@ -30,7 +30,9 @@ nano .env
 | `RTL_DOMAIN` | No | *(disabled)* | Domain for HTTPS access to RTL (enables nginx reverse proxy) |
 | `MOSTRO_REPO` | No | `https://github.com/MostroP2P/mostro.git` | Mostro git repo (cloned and built from source) |
 | `MOSTRO_NSEC_PRIVKEY` | No | *(prompted)* | Nostr private key for Mostro |
+| `MOSTRO_NPUB` | No | *(auto-detected)* | Nostr public key (required with `MOSTRO_NSEC_PRIVKEY` for admin tools) |
 | `MOSTRO_RELAYS` | No | `wss://nos.lol,wss://relay.mostro.network` | Nostr relays (comma-separated) |
+| `MOSTRIX_REPO` | No | `https://github.com/MostroP2P/mostrix.git` | MostriX TUI client repo |
 | `LNURL_DOMAIN` | No | *(disabled)* | Domain for Lightning Address (enables nginx + satdress + certbot) |
 | `LNURL_USERNAMES` | No | `admin` | Comma-separated usernames (`admin,user2`) |
 | `SATDRESS_PORT` | No | `17422` | satdress HTTP port |
@@ -63,6 +65,7 @@ nano .env
 │   ├── RTL-Config.json    # generated
 │   └── database/
 ├── mostro-src/             # cloned from git (built locally)
+├── mostrix-src/            # MostriX TUI (cloned from git, built locally)
 ├── mostro/
 │   ├── settings.toml       # generated
 │   └── nostr-private.txt   # nsec key (chmod 600)

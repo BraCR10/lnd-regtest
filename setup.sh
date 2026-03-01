@@ -6,8 +6,9 @@ set -euo pipefail
 #
 #  Spins up 3 LND nodes on regtest using Docker (host networking),
 #  creates wallets, funds them from bitcoind, opens channels (triangle
-#  topology), launches RTL (Ride The Lightning) to manage all nodes, and
-#  starts Mostro (P2P Lightning exchange over Nostr) connected to lnd1.
+#  topology), launches RTL (Ride The Lightning) to manage all nodes,
+#  starts Mostro (P2P Lightning exchange over Nostr) connected to lnd1,
+#  and builds MostriX (TUI client for Mostro).
 #
 #  Configuration: copy .env.example to .env and fill in your values.
 #  Run ./setup.sh --help for usage information.
@@ -17,9 +18,9 @@ set -euo pipefail
 
 show_usage() {
   cat <<'USAGE'
-Usage: ./setup.sh [--help]
+Usage: ./setup.sh [--help] [--from <step>]
 
-Mostro Regtest — sets up 3 LND regtest nodes + RTL + Mostro with Docker.
+Mostro Regtest — sets up 3 LND regtest nodes + RTL + Mostro + MostriX with Docker.
 
 Steps:
   1. Verifies prerequisites (docker, bitcoind, bitcoin-cli)
@@ -28,7 +29,7 @@ Steps:
   4. Prompts for a wallet password
   5. Writes configs, docker-compose.yml, and starts LND containers
   6. Creates wallets, enables auto-unlock, starts RTL
-  7. Loads/prompts/generates Nostr key, configures and starts Mostro on lnd1
+  7. Loads/prompts/generates Nostr key, configures Mostro on lnd1, builds MostriX TUI
   8. Funds wallets and opens a balanced channel
   9. Domains + HTTPS via nginx (only if RTL_DOMAIN or LNURL_DOMAIN is set)
 
@@ -37,15 +38,25 @@ Configuration:
   to match your bitcoin.conf. See .env.example for all options.
 
 Options:
-  --help, -h    Show this help message
+  --help, -h        Show this help message
+  --from <step>     Start from a specific step (1-9), skipping earlier ones
+                    Example: ./setup.sh --from 7
 USAGE
 }
 
-# Handle --help before loading config
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  show_usage
-  exit 0
-fi
+# Handle flags before loading config
+START_FROM=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help|-h) show_usage; exit 0 ;;
+    --from)
+      if [[ -z "${2:-}" || ! "$2" =~ ^[1-9]$ ]]; then
+        echo "Error: --from requires a step number (1-9)" >&2; exit 1
+      fi
+      START_FROM="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; show_usage; exit 1 ;;
+  esac
+done
 
 # ── Config ────────────────────────────────────────────────────────────────────
 # Load user settings from .env and apply defaults for anything unset.
@@ -92,6 +103,9 @@ MOSTRO_REPO="${MOSTRO_REPO:-https://github.com/MostroP2P/mostro.git}"
 MOSTRO_SRC="${BASE_DIR}/mostro-src"
 MOSTRO_RELAYS="${MOSTRO_RELAYS:-wss://nos.lol,wss://relay.mostro.network}"
 
+MOSTRIX_REPO="${MOSTRIX_REPO:-https://github.com/MostroP2P/mostrix.git}"
+MOSTRIX_SRC="${BASE_DIR}/mostrix-src"
+
 ZMQ_BLOCK="tcp://${BITCOIND_HOST}:28332"
 ZMQ_TX="tcp://${BITCOIND_HOST}:28333"
 
@@ -113,6 +127,7 @@ SATDRESS_PORT="${SATDRESS_PORT:-17422}"
 
 WALLET_PASS="${WALLET_PASS:-}"
 MOSTRO_NSEC=""
+MOSTRO_NPUB_ENV="${MOSTRO_NPUB:-}"
 MOSTRO_NPUB=""
 MOSTRO_HEX=""
 
@@ -496,6 +511,25 @@ create_wallet_rest() {
   fi
 }
 
+# Write MostriX settings.toml so it connects to the local Mostro instance.
+write_mostrix_settings() {
+  local mostrix_dir="${HOME}/.mostrix"
+  mkdir -p "${mostrix_dir}"
+  cat > "${mostrix_dir}/settings.toml" <<EOF
+mostro_pubkey = "${MOSTRO_HEX}"
+nsec_privkey = "${MOSTRO_NSEC}"
+admin_privkey = "${MOSTRO_NSEC}"
+relays = [
+$(IFS=',' ; for r in ${MOSTRO_RELAYS}; do echo "  \"${r}\","; done)
+]
+log_level = "info"
+currencies = ["USD"]
+user_mode = "admin"
+pow = 0
+EOF
+  chmod 600 "${mostrix_dir}/settings.toml"
+}
+
 # ── Steps ─────────────────────────────────────────────────────────────────────
 
 ###############################################################################
@@ -513,6 +547,11 @@ step_preflight() {
     fail "Docker daemon is not running (sudo systemctl start docker)"
   fi
   ok "Docker available"
+
+  if ! command -v cargo &>/dev/null; then
+    fail "cargo is not installed — install Rust via rustup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+  fi
+  ok "cargo available"
 
   if ! command -v bitcoin-cli &>/dev/null; then
     fail "bitcoin-cli not found — install Bitcoin Core"
@@ -570,7 +609,8 @@ step_clean() {
       rm -rf "${BASE_DIR:?}/${node}" 2>/dev/null || true
     fi
   done
-  rm -rf "${BASE_DIR}/rtl" "${BASE_DIR}/mostro" "${BASE_DIR}/satdress" 2>/dev/null || true
+  rm -rf "${BASE_DIR}/rtl" "${BASE_DIR}/mostro" "${BASE_DIR}/satdress" "${BASE_DIR}/mostro-cli-bin" 2>/dev/null || true
+  rm -rf "${HOME}/.mostrix" 2>/dev/null || true
   rm -f "${BASE_DIR}/docker-compose.yml" 2>/dev/null || true
 
   for node in "${NODES[@]}"; do
@@ -772,6 +812,10 @@ step_mostro() {
   if [[ -n "${MOSTRO_NSEC_PRIVKEY:-}" ]]; then
     # Option 1: key from .env
     MOSTRO_NSEC="${MOSTRO_NSEC_PRIVKEY}"
+    if [[ -n "${MOSTRO_NPUB_ENV}" ]]; then
+      MOSTRO_NPUB="${MOSTRO_NPUB_ENV}"
+      ok "Nostr public key loaded from .env"
+    fi
     ok "Nostr private key loaded from .env"
   else
     # Option 2: ask the user
@@ -816,6 +860,40 @@ step_mostro() {
       echo -e "  \033[1;32m${MOSTRO_HEX}\033[0m"
     fi
     echo
+  fi
+
+  # ── Build MostriX (TUI client) ──
+  echo "  Installing MostriX system dependencies..."
+  for pkg in cmake build-essential pkg-config libssl-dev; do
+    if ! dpkg -s "$pkg" &>/dev/null; then
+      sudo apt-get install -y "$pkg" >/dev/null 2>&1
+    fi
+  done
+  ok "MostriX system dependencies installed"
+
+  echo "  Building MostriX (TUI client)..."
+  if [[ -d "${MOSTRIX_SRC}/.git" ]]; then
+    echo "  Updating MostriX source (git pull)..."
+    git -C "${MOSTRIX_SRC}" fetch origin main
+    git -C "${MOSTRIX_SRC}" reset --hard origin/main
+    ok "MostriX source updated to latest main"
+  else
+    echo "  Cloning MostriX from ${MOSTRIX_REPO}..."
+    rm -rf "${MOSTRIX_SRC}"
+    git clone --branch main --single-branch "${MOSTRIX_REPO}" "${MOSTRIX_SRC}"
+    ok "MostriX source cloned"
+  fi
+
+  if ! cargo build --release --manifest-path="${MOSTRIX_SRC}/Cargo.toml"; then
+    fail "MostriX build failed — check Rust toolchain (1.90+) and dependencies"
+  fi
+  ok "MostriX built"
+
+  if [[ -n "${MOSTRO_HEX}" && -n "${MOSTRO_NSEC}" ]]; then
+    write_mostrix_settings
+    ok "MostriX configured (~/.mostrix/settings.toml)"
+  else
+    echo -e "  \033[1;33m⚠\033[0m  MostriX built but not configured — Mostro keys not available"
   fi
 }
 
@@ -1036,13 +1114,19 @@ install_shell_commands() {
     sed -i "/${marker}/,/${marker}/d" "${bashrc}"
   fi
 
+  local alias_block
+  alias_block="mostro-logs() { docker compose -f \"${BASE_DIR}/docker-compose.yml\" logs --tail 100 -f mostro; }"
+  if [[ -f "${MOSTRIX_SRC}/target/release/mostrix" ]]; then
+    alias_block+=$'\n'"alias mostrix='${MOSTRIX_SRC}/target/release/mostrix'"
+  fi
+
   cat >> "${bashrc}" <<EOF
 ${marker}
-mostro-logs() { docker compose -f "${BASE_DIR}/docker-compose.yml" logs --tail 100 -f mostro; }
+${alias_block}
 ${marker}
 EOF
 
-  ok "mostro-logs command installed (run: source ~/.bashrc or open a new terminal)"
+  ok "Shell commands installed (run: source ~/.bashrc or open a new terminal)"
 }
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -1091,9 +1175,19 @@ show_summary() {
     lncli "$node" listchannels | jq '.channels[] | {capacity, local_balance, remote_balance}'
   done
 
+  if [[ -f "${MOSTRIX_SRC}/target/release/mostrix" ]]; then
+    echo "  MostriX (TUI client):"
+    echo "    mostrix               Launch MostriX terminal interface"
+    echo "    Config: ~/.mostrix/settings.toml"
+    echo
+  fi
+
   echo
   echo "  Useful commands:"
   echo "    mostro-logs  Shows last 100 lines + follows in real time"
+  if [[ -f "${MOSTRIX_SRC}/target/release/mostrix" ]]; then
+    echo "    mostrix      MostriX TUI (orders, trades, admin disputes)"
+  fi
   echo "    lncli1:  docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd1_rpc]} <cmd>"
   echo "    lncli2:  docker exec lnd2 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd2_rpc]} <cmd>"
   echo "    lncli3:  docker exec lnd3 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd3_rpc]} <cmd>"
@@ -1157,10 +1251,25 @@ EOF
     done
   fi
 
+  if [[ -f "${MOSTRIX_SRC}/target/release/mostrix" ]]; then
+    cat >> "$f" <<EOF
+
+MOSTRIX (TUI client)
+  mostrix                         Launch MostriX terminal interface
+  Config: ~/.mostrix/settings.toml
+  Keys: Left/Right=tabs, Up/Down=navigate, Enter=select, Q=quit
+EOF
+  fi
+
   cat >> "$f" <<EOF
 
 USEFUL COMMANDS
   mostro-logs                     Last 100 lines + follow
+EOF
+  if [[ -f "${MOSTRIX_SRC}/target/release/mostrix" ]]; then
+    echo "  mostrix                       MostriX TUI (orders, trades, admin)" >> "$f"
+  fi
+  cat >> "$f" <<EOF
   docker exec lnd1 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd1_rpc]} <cmd>
   docker exec lnd2 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd2_rpc]} <cmd>
   docker exec lnd3 lncli --network=regtest --rpcserver=127.0.0.1:${PORTS[lnd3_rpc]} <cmd>
@@ -1174,15 +1283,15 @@ EOF
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 main() {
-  step_preflight
-  step_deps
-  step_clean
-  step_password
-  step_configs_and_start
-  step_wallets_and_unlock
-  step_mostro
-  step_fund_and_channel
-  step_domains
+  [[ "$START_FROM" -le 1 ]] && step_preflight
+  [[ "$START_FROM" -le 2 ]] && step_deps
+  [[ "$START_FROM" -le 3 ]] && step_clean
+  [[ "$START_FROM" -le 4 ]] && step_password
+  [[ "$START_FROM" -le 5 ]] && step_configs_and_start
+  [[ "$START_FROM" -le 6 ]] && step_wallets_and_unlock
+  [[ "$START_FROM" -le 7 ]] && step_mostro
+  [[ "$START_FROM" -le 8 ]] && step_fund_and_channel
+  [[ "$START_FROM" -le 9 ]] && step_domains
   install_shell_commands
   write_summary_file
   show_summary
